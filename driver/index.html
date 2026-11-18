@@ -1,0 +1,188 @@
+<!doctype html>
+<html lang="ar" dir="rtl">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<meta name="theme-color" content="#0B0A08">
+<title>مسار المندوب | ريجيفوكس</title>
+<style>
+  :root { --bg:#0B0A08; --card:#17150F; --line:#2a261d; --txt:#F3EEE3; --mute:#9d937f; --gold:#C9A24B; --ok:#4CAF7A; --warn:#E0A03A; }
+  * { box-sizing: border-box; }
+  body { margin:0; font-family: "Noto Sans Arabic", system-ui, sans-serif; background:var(--bg); color:var(--txt); }
+  header { padding:16px; border-bottom:1px solid var(--line); position:sticky; top:0; background:var(--bg); z-index:5; }
+  h1 { font-size:18px; margin:0 0 4px; }
+  .sub { color:var(--mute); font-size:13px; }
+  .stats { display:flex; gap:8px; margin-top:10px; }
+  .stat { flex:1; background:var(--card); border:1px solid var(--line); border-radius:10px; padding:8px; text-align:center; }
+  .stat b { display:block; font-size:18px; color:var(--gold); }
+  .stat span { font-size:12px; color:var(--mute); }
+  .tabs { display:flex; gap:6px; padding:12px 16px 0; }
+  .tab { flex:1; background:transparent; color:var(--mute); border:1px solid var(--line); border-radius:999px; padding:8px; font:inherit; cursor:pointer; }
+  .tab.on { color:var(--bg); background:var(--gold); border-color:var(--gold); font-weight:700; }
+  #map { height:220px; margin:12px 16px 0; border-radius:12px; border:1px solid var(--line); display:none; }
+  main { padding:12px 16px 40px; display:grid; gap:12px; }
+  .card { background:var(--card); border:1px solid var(--line); border-radius:14px; padding:14px; }
+  .card.done { opacity:.55; }
+  .row { display:flex; justify-content:space-between; align-items:center; gap:8px; }
+  .badge { font-size:12px; padding:3px 10px; border-radius:999px; border:1px solid currentColor; }
+  .pickup { color:var(--warn); }
+  .delivery { color:var(--ok); }
+  .addr { margin:10px 0 4px; font-size:15px; line-height:1.6; }
+  .meta { color:var(--mute); font-size:13px; }
+  .btns { display:grid; grid-template-columns:1fr 1fr; gap:8px; margin-top:12px; }
+  .btn { border:1px solid var(--line); background:#221f17; color:var(--txt); border-radius:10px; padding:11px; font:inherit; font-size:14px; text-align:center; text-decoration:none; cursor:pointer; }
+  .btn.primary { background:var(--gold); color:var(--bg); border-color:var(--gold); font-weight:700; }
+  .btn:disabled { opacity:.4; }
+  .empty { text-align:center; color:var(--mute); padding:40px 0; }
+</style>
+</head>
+<body>
+<header>
+  <h1>مسار المندوب</h1>
+  <div class="sub" id="driverName">المندوب: —</div>
+  <div class="stats">
+    <div class="stat"><b id="sRemain">0</b><span>متبقي</span></div>
+    <div class="stat"><b id="sPick">0</b><span>استلام</span></div>
+    <div class="stat"><b id="sDone">0</b><span>مكتمل</span></div>
+  </div>
+</header>
+
+<div class="tabs">
+  <button class="tab on" data-f="all">الكل</button>
+  <button class="tab" data-f="pickup">استلام</button>
+  <button class="tab" data-f="delivery">توصيل</button>
+</div>
+
+<div id="map"></div>
+<main id="list"></main>
+
+<script>
+(function () {
+  // ---- Settings ------------------------------------------------------------
+  var DRIVER = { name: "مندوب تجريبي", id: "D-001" };
+  var GOOGLE_MAPS_API_KEY = "AIzaSyApA-foWFShzMwF2eFUtzRgb9ae6dAYpUw"; // restrict to referrers in Google Cloud
+  var STORAGE_KEY = "regivox-driver-" + DRIVER.id;
+
+  // ---- Sample tasks (replace with API data later) ---------------------------
+  // type: "pickup" = collect from sender, "delivery" = drop at recipient
+  var TASKS = [
+    { id: "RGX-1001", type: "pickup",   name: "متجر النور",    phone: "0501234567", address: "حي العليا، طريق الملك فهد، الرياض", lat: 24.6906, lng: 46.6853, note: "الدور الثاني، اتصل قبل الوصول" },
+    { id: "RGX-1002", type: "delivery", name: "سارة الشمري",   phone: "0557654321", address: "حي الملقا، شارع أنس بن مالك، الرياض", lat: 24.8000, lng: 46.6400, note: "" },
+    { id: "RGX-1003", type: "pickup",   name: "مستودع الأمل",  phone: "0112345678", address: "حي الناصرية، الرياض", lat: 24.7600, lng: 46.6500, note: "بوابة 3" },
+    { id: "RGX-1004", type: "delivery", name: "خالد العتيبي",  phone: "0509876543", address: "حي النسيم، الرياض", lat: 24.7900, lng: 46.7600, note: "اتصل عند الوصول" }
+  ];
+
+  // ---- State ----------------------------------------------------------------
+  var state = JSON.parse(localStorage.getItem(STORAGE_KEY) || "{}"); // { taskId: "picked" | "delivered" }
+  var filter = "all";
+  var map = null, markers = [];
+
+  var $ = function (id) { return document.getElementById(id); };
+  var LABEL = { pickup: "استلام", delivery: "توصيل" };
+
+  function statusOf(t) { return state[t.id] || "pending"; }
+  function isDone(t) {
+    return t.type === "pickup" ? statusOf(t) !== "pending" : statusOf(t) === "delivered";
+  }
+  function save() { localStorage.setItem(STORAGE_KEY, JSON.stringify(state)); }
+
+  function mapsLink(t) {
+    return "https://www.google.com/maps/dir/?api=1&destination=" + t.lat + "," + t.lng;
+  }
+
+  function render() {
+    $("driverName").textContent = "المندوب: " + DRIVER.name;
+    var pick = TASKS.filter(function (t) { return t.type === "pickup" && !isDone(t); }).length;
+    var done = TASKS.filter(isDone).length;
+    $("sRemain").textContent = TASKS.length - done;
+    $("sPick").textContent = pick;
+    $("sDone").textContent = done;
+
+    var list = TASKS.filter(function (t) { return filter === "all" || t.type === filter; });
+    if (!list.length) { $("list").innerHTML = '<div class="empty">لا توجد مهام</div>'; }
+    else {
+      $("list").innerHTML = list.map(function (t) {
+        var s = statusOf(t);
+        var action;
+        if (t.type === "pickup") {
+          action = s === "pending"
+            ? '<button class="btn primary" data-act="picked" data-id="' + t.id + '">تم الاستلام</button>'
+            : '<button class="btn" disabled>تم الاستلام ✓</button>';
+        } else {
+          action = s === "delivered"
+            ? '<button class="btn" disabled>تم التسليم ✓</button>'
+            : '<button class="btn primary" data-act="delivered" data-id="' + t.id + '"' + (s === "pending" ? ' disabled' : '') + '>تم التسليم</button>';
+        }
+        return '<article class="card ' + (isDone(t) ? "done" : "") + '">' +
+          '<div class="row"><span class="badge ' + t.type + '">' + LABEL[t.type] + '</span><span class="meta">' + t.id + '</span></div>' +
+          '<div class="addr">' + escapeHtml(t.address) + '</div>' +
+          '<div class="meta">' + escapeHtml(t.name) + (t.note ? ' · ' + escapeHtml(t.note) : '') + '</div>' +
+          '<div class="btns">' +
+            '<a class="btn" href="tel:' + t.phone + '">اتصال</a>' +
+            '<a class="btn" href="' + mapsLink(t) + '" target="_blank" rel="noopener">الملاحة</a>' +
+            action +
+          '</div></article>';
+      }).join("");
+    }
+    renderMarkers();
+  }
+
+  function escapeHtml(s) {
+    return String(s).replace(/[&<>"']/g, function (c) {
+      return { "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c];
+    });
+  }
+
+  // ---- Actions ----------------------------------------------------------------
+  $("list").addEventListener("click", function (e) {
+    var b = e.target.closest("button[data-act]");
+    if (!b) return;
+    state[b.dataset.id] = b.dataset.act === "picked" ? "picked" : "delivered";
+    save();
+    render();
+  });
+
+  document.querySelectorAll(".tab").forEach(function (b) {
+    b.addEventListener("click", function () {
+      filter = b.dataset.f;
+      document.querySelectorAll(".tab").forEach(function (x) { x.classList.toggle("on", x === b); });
+      render();
+    });
+  });
+
+  // ---- Google Maps (optional) -----------------------------------------------
+  function loadMaps() {
+    if (!GOOGLE_MAPS_API_KEY) return;
+    window.__driverMapsReady = function () { initMap(); };
+    var s = document.createElement("script");
+    s.async = true;
+    s.src = "https://maps.googleapis.com/maps/api/js?key=" + encodeURIComponent(GOOGLE_MAPS_API_KEY) + "&callback=__driverMapsReady";
+    s.onerror = function () { $("map").style.display = "none"; };
+    document.head.appendChild(s);
+  }
+
+  function initMap() {
+    $("map").style.display = "block";
+    map = new google.maps.Map($("map"), { center: { lat: 24.75, lng: 46.68 }, zoom: 11, disableDefaultUI: true });
+    renderMarkers();
+  }
+
+  function renderMarkers() {
+    if (!map) return;
+    markers.forEach(function (m) { m.setMap(null); });
+    markers = TASKS.filter(function (t) { return !isDone(t); }).map(function (t) {
+      return new google.maps.Marker({
+        map: map,
+        position: { lat: t.lat, lng: t.lng },
+        title: t.id + " · " + LABEL[t.type],
+        icon: t.type === "pickup" ? "http://maps.google.com/mapfiles/ms/icons/orange-dot.png" : "http://maps.google.com/mapfiles/ms/icons/green-dot.png"
+      });
+    });
+  }
+
+  render();
+  loadMaps();
+})();
+</script>
+</body>
+</html>
