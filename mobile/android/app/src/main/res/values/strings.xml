@@ -1,0 +1,7 @@
+<?xml version='1.0' encoding='utf-8'?>
+<resources>
+    <string name="app_name">Regivox Logistics</string>
+    <string name="title_activity_main">Regivox Logistics</string>
+    <string name="package_name">org.regivox.logistics</string>
+    <string name="custom_url_scheme">org.regivox.logistics</string>
+</resources>
