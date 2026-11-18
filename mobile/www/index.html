@@ -1032,6 +1032,22 @@ body::before { content: ""; position: fixed; inset: 0 0 auto; height: env(safe-a
   var FORM_RECIPIENT = "thamer@regivox.org";
   var STANDALONE = true; // set to true when the page is hosted as its own site (GitHub Pages)
 
+  // ---- Google Maps (loaded on demand, only when a map is shown) -----------
+  // Restrict this key in Google Cloud Console to the HTTP referrers regivox.org/* and api.regivox.org/*.
+  var GOOGLE_MAPS_API_KEY = "AIzaSyApA-foWFShzMwF2eFUtzRgb9ae6dAYpUw";
+  function loadGoogleMaps() {
+    if (window.google && window.google.maps) { return Promise.resolve(window.google.maps); }
+    return new Promise(function (resolve, reject) {
+      var cb = "__regivoxMapsReady";
+      window[cb] = function () { resolve(window.google.maps); };
+      var s = document.createElement("script");
+      s.async = true;
+      s.src = "https://maps.googleapis.com/maps/api/js?key=" + encodeURIComponent(GOOGLE_MAPS_API_KEY) + "&callback=" + cb;
+      s.onerror = function () { reject(new Error("Google Maps failed to load")); };
+      document.head.appendChild(s);
+    });
+  }
+
   var wrap = document.getElementById("regivox-site");
   var form = document.getElementById("quoteForm");
   var statusEl = document.getElementById("formStatus");
